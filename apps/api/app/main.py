@@ -28,3 +28,13 @@ async def healthz():
     except Exception:
         db_ok = False
     return {"ok": True, "db": db_ok}
+
+
+@app.on_event("startup")
+async def ensure_indexes() -> None:
+    # Ensure a unique email index for users collection
+    try:
+        await db.users.create_index("email", unique=True)
+    except Exception:
+        # Index may already exist or DB not reachable at startup; ignore here
+        pass

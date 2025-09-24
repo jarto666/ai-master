@@ -1,9 +1,10 @@
 
 from functools import lru_cache
 from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, status
-from jwt import PyJWKClient, decode as jwt_decode
+from jwt import PyJWKClient, decode as jwt_decode, encode as jwt_encode
 from jwt import InvalidTokenError
 from app.core.settings import settings
 
@@ -15,6 +16,11 @@ OIDC_AUDIENCE = settings.OIDC_AUDIENCE
 SUPABASE_PROJECT_REF = settings.SUPABASE_PROJECT_REF
 OIDC_ISSUER = settings.OIDC_ISSUER
 OIDC_JWKS_URL = settings.OIDC_JWKS_URL
+
+# Internal JWT configuration
+INTERNAL_JWT_SECRET = settings.INTERNAL_JWT_SECRET
+INTERNAL_JWT_ALGORITHM = settings.INTERNAL_JWT_ALGORITHM
+INTERNAL_JWT_EXPIRES_SECONDS = settings.INTERNAL_JWT_EXPIRES_SECONDS
 
 
 def _raise_misconfigured() -> None:
@@ -45,21 +51,42 @@ def _get_token_from_request(request: Request) -> str:
     if token_from_cookie:
         return token_from_cookie
 
-    print(f"request.headers: {request.headers}")
     token_from_header = _extract_bearer_from_authorization_header(
         request.headers.get("authorization") or request.headers.get("Authorization")
     )
-    print(f"token_from_header: {token_from_header}")
     if token_from_header:
         return token_from_header
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
 
 def require_user(request: Request) -> Dict[str, Any]:
-    print(f"require_user")
+    """Validate our internal JWT from cookie or Authorization header.
+
+    Returns claims containing at least 'id' and 'email'.
+    """
+    token = _get_token_from_request(request)
+    try:
+        claims = jwt_decode(
+            token,
+            INTERNAL_JWT_SECRET,
+            algorithms=[INTERNAL_JWT_ALGORITHM],
+            options={"require": ["exp", "iat"]},
+        )
+        if "id" not in claims or "email" not in claims:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        return claims
+    except InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+
+def verify_oidc_token(token: str) -> Dict[str, Any]:
+    """Verify an external OIDC provider token using JWKS.
+
+    Used only during session establishment to authenticate the user
+    before issuing our own internal JWT.
+    """
     if not OIDC_ISSUER or not OIDC_JWKS_URL:
         _raise_misconfigured()
-    token = _get_token_from_request(request)
     try:
         signing_key = get_jwk_client().get_signing_key_from_jwt(token).key
         claims = jwt_decode(
@@ -77,5 +104,21 @@ def require_user(request: Request) -> Dict[str, Any]:
 
 def get_cookie_name() -> str:
     return AUTH_COOKIE_NAME
+
+
+def sign_internal_jwt(*, email: str, user_id: str, expires_in_seconds: Optional[int] = None) -> str:
+    """Create a short payload JWT containing only 'id' and 'email'.
+
+    Adds standard 'iat' and 'exp' for security.
+    """
+    now = datetime.now(tz=timezone.utc)
+    ttl = expires_in_seconds if expires_in_seconds is not None else INTERNAL_JWT_EXPIRES_SECONDS
+    payload: Dict[str, Any] = {
+        "id": user_id,
+        "email": email,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl)).timestamp()),
+    }
+    return jwt_encode(payload, INTERNAL_JWT_SECRET, algorithm=INTERNAL_JWT_ALGORITHM)
 
 

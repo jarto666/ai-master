@@ -1,3 +1,4 @@
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -23,6 +24,15 @@ class Settings(BaseSettings):
     OIDC_JWKS_URL: str = "https://xx.supabase.co/auth/v1/keys"
     # Optional: when using Supabase (HS256-signed tokens), set this to your project's JWT secret
     SUPABASE_JWT_SECRET: str = ""
+
+    # Internal JWT (issued by our API) config
+    INTERNAL_JWT_SECRET: str = "dev-secret-change-me"
+    INTERNAL_JWT_ALGORITHM: str = "HS256"
+    INTERNAL_JWT_EXPIRES_SECONDS: int = 60 * 60 * 24 * 365  # 1 year
+
+    AUTH_COOKIE_DOMAIN: str = "localhost"
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
