@@ -1,0 +1,88 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.env.osx": { 
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    "terminal.integrated.env.linux": { 
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    "terminal.integrated.env.windows": { 
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    
+    // Pyright settings - using pyrightconfig.json as single source of truth
+    "python.languageServer": "None",
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.importFormat": "absolute",
+    
+    // Ruff settings for formatting and additional linting
+    "ruff.enable": true,
+    "ruff.importStrategy": "fromEnvironment",
+    "ruff.interpreter": ["${workspaceFolder}/.venv/bin/python"],
+    "ruff.organizeImports": true,
+    "ruff.fixAll": true,
+    
+    // Editor settings for Python
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        },
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.rulers": [88]
+    },
+    
+    // Task settings
+    "task.quickOpen.history": 30,
+    "task.quickOpen.detail": true,
+    
+    // Debug settings
+    "debug.toolBarLocation": "docked",
+    "debug.inlineValues": true,
+    
+    // Files to exclude from explorer
+    "files.exclude": {
+        ".mypy_cache": true,
+        ".ruff_cache": true,
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/*.pyc": true,
+        "**/*.pyo": true,
+        "**/*.pyd": true,
+        "**/.Python": true,
+        "**/env": true,
+        "**/venv": true,
+        "**/ENV": true,
+        "**/env.bak": true,
+        "**/venv.bak": true,
+        "**/.venv": true,
+        "**/pip-log.txt": true,
+        "**/pip-delete-this-directory.txt": true,
+        "**/.coverage": true,
+        "**/.coverage.*": true,
+        "**/htmlcov": true,
+        "**/.tox": true,
+        "**/.nox": true,
+        "**/.hypothesis": true,
+        "**/.eggs": true,
+        "**/*.egg-info": true,
+        "**/*.egg": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/.ipynb_checkpoints": true,
+        "**/.langgraph_api": true
+    },
+    
+    // Workspace color customization
+    "workbench.colorCustomizations": {
+        "activityBar.background": "#202F3D",
+        "titleBar.activeBackground": "#2D4256",
+        "titleBar.activeForeground": "#F8FAFB"
+    }
+}
