@@ -7,7 +7,7 @@ from typing import Any, Dict
 from app.core.db import db
 from app.core.s3 import s3
 from app.core.settings import settings
-from app.features.uploads.service import (
+from app.core.utils.assets import (
     ALLOWED_MIME_TYPES,
     MAX_FILE_SIZE_BYTES,
 )
