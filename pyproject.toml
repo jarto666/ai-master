@@ -41,6 +41,8 @@ worker = [
   "pydantic-settings==2.5.2",
   "python-dotenv==1.0.1",
   "typing_extensions>=4.8",
+  "motor==3.6.0",
+  "pymongo[srv]==4.9.2",
 ]
 
 dev = [

@@ -1,13 +1,12 @@
-
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Dict, Optional
-from datetime import datetime, timedelta, timezone
 
-from fastapi import HTTPException, Request, status
-from jwt import PyJWKClient, decode as jwt_decode, encode as jwt_encode
-from jwt import InvalidTokenError
 from app.core.settings import settings
-
+from fastapi import HTTPException, Request, status
+from jwt import InvalidTokenError, PyJWKClient
+from jwt import decode as jwt_decode
+from jwt import encode as jwt_encode
 
 AUTH_COOKIE_NAME = settings.AUTH_COOKIE_NAME
 OIDC_AUDIENCE = settings.OIDC_AUDIENCE
@@ -37,7 +36,9 @@ def get_jwk_client() -> PyJWKClient:
     return PyJWKClient(OIDC_JWKS_URL)
 
 
-def _extract_bearer_from_authorization_header(authorization: Optional[str]) -> Optional[str]:
+def _extract_bearer_from_authorization_header(
+    authorization: Optional[str],
+) -> Optional[str]:
     if not authorization:
         return None
     if not authorization.startswith("Bearer "):
@@ -56,7 +57,9 @@ def _get_token_from_request(request: Request) -> str:
     )
     if token_from_header:
         return token_from_header
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token"
+    )
 
 
 def require_user(request: Request) -> Dict[str, Any]:
@@ -73,10 +76,14 @@ def require_user(request: Request) -> Dict[str, Any]:
             options={"require": ["exp", "iat"]},
         )
         if "id" not in claims or "email" not in claims:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
+            )
         return claims
     except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+        )
 
 
 def verify_oidc_token(token: str) -> Dict[str, Any]:
@@ -99,20 +106,28 @@ def verify_oidc_token(token: str) -> Dict[str, Any]:
         )
         return claims
     except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+        )
 
 
 def get_cookie_name() -> str:
     return AUTH_COOKIE_NAME
 
 
-def sign_internal_jwt(*, email: str, user_id: str, expires_in_seconds: Optional[int] = None) -> str:
+def sign_internal_jwt(
+    *, email: str, user_id: str, expires_in_seconds: Optional[int] = None
+) -> str:
     """Create a short payload JWT containing only 'id' and 'email'.
 
     Adds standard 'iat' and 'exp' for security.
     """
     now = datetime.now(tz=timezone.utc)
-    ttl = expires_in_seconds if expires_in_seconds is not None else INTERNAL_JWT_EXPIRES_SECONDS
+    ttl = (
+        expires_in_seconds
+        if expires_in_seconds is not None
+        else INTERNAL_JWT_EXPIRES_SECONDS
+    )
     payload: Dict[str, Any] = {
         "id": user_id,
         "email": email,
@@ -120,5 +135,3 @@ def sign_internal_jwt(*, email: str, user_id: str, expires_in_seconds: Optional[
         "exp": int((now + timedelta(seconds=ttl)).timestamp()),
     }
     return jwt_encode(payload, INTERNAL_JWT_SECRET, algorithm=INTERNAL_JWT_ALGORITHM)
-
-

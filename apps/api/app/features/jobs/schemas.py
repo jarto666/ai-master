@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 
@@ -15,9 +15,21 @@ class Job(BaseModel):
     object_key: str
     reference_object_key: str | None = None
     status: Literal["queued", "processing", "done", "failed"] = "queued"
+    result_object_key: str | None = None
+    preview_object_key: str | None = None
+    last_error: str | None = Field(None, alias="lastError")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         populate_by_name = True
         json_encoders = {datetime: lambda v: v.isoformat()}
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def cast_id_to_str(cls, v):
+        # Accept Mongo ObjectId or any other type and cast to string
+        try:
+            return str(v) if v is not None else v
+        except Exception:
+            return v

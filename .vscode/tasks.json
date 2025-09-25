@@ -18,6 +18,12 @@
       "type": "shell",
       "command": "make web",
       "problemMatcher": []
+    },
+    {
+      "label": "Up",
+      "type": "shell",
+      "command": "make up",
+      "problemMatcher": []
     }
   ]
 }
