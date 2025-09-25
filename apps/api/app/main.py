@@ -1,13 +1,16 @@
 import asyncio
 import json
-from fastapi import FastAPI
-from dotenv import load_dotenv
+
 import aio_pika
 from app.core.db import db
 from app.core.settings import settings
-from app.features.uploads.router import router as uploads_router
-from app.features.jobs.router import router as jobs_router
+from app.features.assets.router import router as assets_router
 from app.features.auth.router import router as auth_router
+from app.features.jobs.router import router as jobs_router
+from app.features.mastering.router import router as mastering_router
+from app.features.uploads.router import router as uploads_router
+from dotenv import load_dotenv
+from fastapi import FastAPI
 
 load_dotenv()
 
@@ -15,6 +18,8 @@ app = FastAPI(title="Mastering API", version="0.1.0")
 
 app.include_router(auth_router)
 app.include_router(uploads_router)
+app.include_router(assets_router)
+app.include_router(mastering_router)
 app.include_router(jobs_router)
 
 
@@ -94,7 +99,9 @@ async def _consume_events() -> None:
                 try:
                     from bson import ObjectId
 
-                    await db.jobs.update_one({"_id": ObjectId(job_id)}, {"$set": update})
+                    await db.jobs.update_one(
+                        {"_id": ObjectId(job_id)}, {"$set": update}
+                    )
                 except Exception:
                     # Swallow to keep consumer running
                     pass

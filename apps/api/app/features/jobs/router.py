@@ -1,4 +1,5 @@
 from fastapi import APIRouter, status
+
 from . import schemas, service
 
 router = APIRouter()

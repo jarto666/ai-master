@@ -1,8 +1,10 @@
-from bson import ObjectId
 from datetime import datetime
-from fastapi import HTTPException, status
+
 from app.core.db import db
 from app.core.rabbit import publish_job
+from bson import ObjectId
+from fastapi import HTTPException, status
+
 from . import schemas
 
 
@@ -33,16 +35,23 @@ async def create_job(req: schemas.JobCreateRequest) -> schemas.Job:
     try:
         return schemas.Job.model_validate(created_job_doc)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to validate job")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to validate job",
+        )
 
 
 async def get_job(job_id: str) -> schemas.Job:
     try:
         oid = ObjectId(job_id)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        )
 
     doc = await db.jobs.find_one({"_id": oid})
     if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        )
     return schemas.Job.model_validate(doc)

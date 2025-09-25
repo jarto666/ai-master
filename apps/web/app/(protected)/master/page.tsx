@@ -39,8 +39,8 @@ export default function MasterPage() {
         return;
       }
 
-      setStatus("Requesting presign...");
-      const presignRes = await fetch("/api/uploads/presign", {
+      setStatus("Creating asset...");
+      const assetRes = await fetch("/api/assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -48,20 +48,21 @@ export default function MasterPage() {
           file_name: selectedFile.name,
           file_type: selectedFile.type || "audio/wav",
           file_size: selectedFile.size,
-          upload_type: "input",
         }),
       });
-      const presign = await presignRes.json();
-      if (!presignRes.ok) {
-        setStatus(`Presign failed ${presignRes.status}`);
+      const assetPayload = await assetRes.json();
+      if (!assetRes.ok) {
+        setStatus(`Create asset failed ${assetRes.status}`);
         setErrorText(
-          typeof presign?.detail === "string"
-            ? presign.detail
-            : JSON.stringify(presign)
+          typeof assetPayload?.detail === "string"
+            ? assetPayload.detail
+            : JSON.stringify(assetPayload)
         );
         return;
       }
-
+      const asset = assetPayload.asset;
+      const presign = assetPayload.upload || {};
+      const assetId: string | undefined = asset?.id || asset?._id;
       const url: string = presign.url;
       const fields: Record<string, string> = presign.fields || {};
       const key = fields.key || presign.key;
@@ -86,16 +87,35 @@ export default function MasterPage() {
 
       setObjectKey(key);
       setPublicBaseUrl(url); // typically http://localhost:9000/<bucket>
-      setStatus("Creating job...");
+      if (!assetId) {
+        setStatus("Asset id missing in response");
+        return;
+      }
 
-      const jobRes = await fetch("/api/jobs", {
+      setStatus("Confirming upload...");
+      const confirmRes = await fetch(`/api/assets/${assetId}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ object_key: key }),
+        credentials: "include",
+        body: JSON.stringify({}),
       });
-      const job = await jobRes.json();
-      if (!jobRes.ok) {
-        setStatus(`Create job failed ${jobRes.status}`);
+      const confirmPayload = await confirmRes.json().catch(() => ({}));
+      if (!confirmRes.ok) {
+        setStatus(`Confirm failed ${confirmRes.status}`);
+        setErrorText(JSON.stringify(confirmPayload));
+        return;
+      }
+
+      setStatus("Starting mastering...");
+      const startRes = await fetch("/api/mastering/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ assetId: assetId }),
+      });
+      const job = await startRes.json();
+      if (!startRes.ok) {
+        setStatus(`Start mastering failed ${startRes.status}`);
         setErrorText(JSON.stringify(job));
         return;
       }
@@ -119,7 +139,7 @@ export default function MasterPage() {
         return;
       }
       setStatus("Checking status...");
-      const res = await fetch(`/api/jobs/${jobId}`);
+      const res = await fetch(`/api/mastering/${jobId}`);
       const job = await res.json();
       if (!res.ok) {
         setStatus(`Status check failed ${res.status}`);
@@ -130,7 +150,9 @@ export default function MasterPage() {
       setJobStatus(st);
       if (st === "failed") {
         setStatus("Job failed");
-        setErrorText(job?.lastError || job?.error || "Unknown error");
+        setErrorText(
+          job?.last_error || job?.lastError || job?.error || "Unknown error"
+        );
         return;
       }
       if (st === "done") {
@@ -182,7 +204,7 @@ export default function MasterPage() {
             className="mt-2 px-3 py-2 rounded bg-blue-600 text-white"
             onClick={uploadAndStart}
           >
-            Upload & Start Job
+            Upload & Start Mastering
           </button>
 
           <div className="text-sm opacity-80">
