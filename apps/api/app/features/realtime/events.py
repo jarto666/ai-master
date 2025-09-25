@@ -12,19 +12,13 @@ _events_task: asyncio.Task | None = None
 
 
 async def _consume_events(handler: Callable[[str, dict], Awaitable[None]]) -> None:
-    if settings.RMQ_EVENTS_QUEUE == settings.RMQ_QUEUE:
-        print(
-            "[api] WARNING: RMQ_EVENTS_QUEUE equals RMQ_QUEUE; refusing to start events consumer to avoid draining jobs queue",
-        )
-        return
-
     print(
         "[api] starting events consumer",
         {
             "url": settings.RABBITMQ_URL,
             "events_exchange": settings.RMQ_EVENTS_EXCHANGE,
-            "events_queue": settings.RMQ_EVENTS_QUEUE,
             "events_rk": settings.RMQ_EVENTS_ROUTING_KEY,
+            "exclusive_ephemeral_queue": True,
         },
     )
 
@@ -36,8 +30,13 @@ async def _consume_events(handler: Callable[[str, dict], Awaitable[None]]) -> No
         type=aio_pika.ExchangeType.TOPIC,
         durable=True,
     )
-    queue = await channel.declare_queue(settings.RMQ_EVENTS_QUEUE, durable=True)
-    await queue.bind(exchange, routing_key=settings.RMQ_EVENTS_ROUTING_KEY)
+    # Declare a per-instance, server-named exclusive queue so every API instance
+    # receives a copy of each event (pub/sub fanout via topic binding).
+    queue = await channel.declare_queue(
+        "", exclusive=True, durable=False, auto_delete=True
+    )
+    rk = settings.RMQ_EVENTS_ROUTING_KEY or "#"
+    await queue.bind(exchange, routing_key=rk)
 
     async with queue.iterator() as queue_iter:
         async for message in queue_iter:  # runs until connection closes
