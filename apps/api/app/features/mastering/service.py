@@ -11,6 +11,17 @@ from fastapi import HTTPException, status
 from . import schemas
 
 
+async def list_jobs(*, user_id: str) -> list[schemas.MasteringJob]:
+    cursor = db.jobs.find({"userId": user_id}).sort("created_at", -1)
+    results: list[schemas.MasteringJob] = []
+    async for doc in cursor:
+        try:
+            results.append(schemas.MasteringJob.model_validate(doc))
+        except Exception:
+            continue
+    return results
+
+
 async def start_mastering(
     *, req: schemas.StartMasteringRequest, user_id: str
 ) -> schemas.MasteringJob:

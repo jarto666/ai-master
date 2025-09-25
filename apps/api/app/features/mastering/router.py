@@ -13,6 +13,16 @@ def _get_user_id(request: Request) -> str:
     return str(claims.get("id"))
 
 
+@router.get(
+    "/mastering/jobs",
+    response_model=list[schemas.MasteringJob],
+    status_code=status.HTTP_200_OK,
+)
+async def list_jobs(request: Request):
+    user_id = _get_user_id(request)
+    return await service.list_jobs(user_id=user_id)
+
+
 @router.post(
     "/mastering/start",
     response_model=schemas.MasteringJob,

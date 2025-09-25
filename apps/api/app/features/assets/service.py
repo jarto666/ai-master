@@ -17,6 +17,18 @@ from fastapi import HTTPException, status
 from . import schemas
 
 
+async def list_assets(*, user_id: str) -> list[schemas.Asset]:
+    cursor = db.assets.find({"userId": user_id}).sort("created_at", -1)
+    results: list[schemas.Asset] = []
+    async for doc in cursor:
+        try:
+            results.append(schemas.Asset.model_validate(doc))
+        except Exception:
+            # Skip docs that fail validation
+            continue
+    return results
+
+
 def _extension_from_mime_or_name(file_type: str, file_name: str) -> str:
     # Try to deduce extension from mime; fallback to file name; default to 'bin'
     if "/" in file_type:

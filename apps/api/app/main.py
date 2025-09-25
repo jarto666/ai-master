@@ -1,14 +1,19 @@
 import asyncio
 import json
+from collections import defaultdict
+from typing import Dict, Set
 
 import aio_pika
+from app.core.auth import AUTH_COOKIE_NAME, INTERNAL_JWT_ALGORITHM, INTERNAL_JWT_SECRET
 from app.core.db import db
 from app.core.settings import settings
 from app.features.assets.router import router as assets_router
 from app.features.auth.router import router as auth_router
 from app.features.mastering.router import router as mastering_router
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from jwt import InvalidTokenError
+from jwt import decode as jwt_decode
 
 load_dotenv()
 
@@ -36,6 +41,9 @@ async def healthz():
 
 
 _events_task: asyncio.Task | None = None
+
+# In-memory websocket registry mapping userId to a set of active sockets
+_ws_connections: Dict[str, Set[WebSocket]] = defaultdict(set)
 
 
 async def _consume_events() -> None:
@@ -98,9 +106,33 @@ async def _consume_events() -> None:
                     await db.jobs.update_one(
                         {"_id": ObjectId(job_id)}, {"$set": update}
                     )
+
+                    # Read updated job to know the owner and broadcast
+                    job_doc = await db.jobs.find_one({"_id": ObjectId(job_id)})
+                    if job_doc and isinstance(job_doc.get("userId"), str):
+                        await _broadcast_job_update(job_doc["userId"], job_doc)
                 except Exception:
                     # Swallow to keep consumer running
                     pass
+
+
+async def _broadcast_job_update(user_id: str, job_doc: dict) -> None:
+    """Send a job update to all active sockets for the given user."""
+    if not user_id:
+        return
+    sockets = list(_ws_connections.get(user_id, set()))
+    if not sockets:
+        return
+    payload = json.dumps({"type": "job.update", "job": job_doc}, default=str)
+    for ws in sockets:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            # Drop broken sockets from the set on send errors
+            try:
+                _ws_connections[user_id].discard(ws)
+            except Exception:
+                pass
 
 
 @app.on_event("startup")
@@ -124,3 +156,50 @@ async def shutdown() -> None:
     global _events_task
     if _events_task and not _events_task.done():
         _events_task.cancel()
+
+
+def _get_user_id_from_websocket(websocket: WebSocket) -> str:
+    """Extract and validate the internal JWT from cookies for a websocket connection."""
+    token = websocket.cookies.get(AUTH_COOKIE_NAME)
+    if not token:
+        raise RuntimeError("Missing token")
+    try:
+        claims = jwt_decode(
+            token,
+            INTERNAL_JWT_SECRET,
+            algorithms=[INTERNAL_JWT_ALGORITHM],
+            options={"require": ["exp", "iat"]},
+        )
+        user_id = str(claims.get("id") or "")
+        if not user_id:
+            raise RuntimeError("Invalid token payload")
+        return user_id
+    except InvalidTokenError as e:
+        raise RuntimeError("Invalid token") from e
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    # Accept early to read cookies, then auth
+    await websocket.accept()
+    try:
+        user_id = _get_user_id_from_websocket(websocket)
+    except Exception:
+        await websocket.close(code=4401)
+        return
+    # Register
+    _ws_connections[user_id].add(websocket)
+    try:
+        # Keep alive; we don't expect meaningful client messages
+        while True:
+            # simple ping-pong; ignore content
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            _ws_connections[user_id].discard(websocket)
+            if not _ws_connections[user_id]:
+                _ws_connections.pop(user_id, None)
+        except Exception:
+            pass

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import type { ChangeEvent } from "react";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -11,17 +11,45 @@ export default function MasterPage() {
   const [status, setStatus] = useState<string>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
-  const [objectKey, setObjectKey] = useState<string | null>(null);
   const [publicBaseUrl, setPublicBaseUrl] = useState<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
+  type ApiAsset = {
+    id?: string;
+    _id?: string;
+    object_key: string;
+    mime_type?: string;
+    mimeType?: string;
+    file_size?: number;
+    fileSize?: number;
+    status?: string;
+  };
+
+  type MasteringJob = {
+    id?: string;
+    _id?: string;
+    userId?: string;
+    inputAssetId?: string;
+    input_asset_id?: string;
+    status?: string;
+    result_object_key?: string | null;
+    preview_object_key?: string | null;
+    updated_at?: string;
+    created_at?: string;
+  };
+
+  const [assets, setAssets] = useState<ApiAsset[]>([]);
+  const [jobsByAssetId, setJobsByAssetId] = useState<
+    Record<string, MasteringJob>
+  >({});
+  const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
+
   function onFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] || null;
     setSelectedFile(file);
     setStatus("idle");
-    setObjectKey(null);
     setJobId(null);
     setJobStatus(null);
     setErrorText(null);
@@ -29,12 +57,13 @@ export default function MasterPage() {
     setPreviewUrl(null);
   }
 
-  async function uploadAndStart() {
+  async function uploadAndStart(fileOverride?: File | null) {
     try {
       setErrorText(null);
       setResultUrl(null);
       setPreviewUrl(null);
-      if (!selectedFile) {
+      const file = fileOverride ?? selectedFile;
+      if (!file) {
         setStatus("Please select a file first.");
         return;
       }
@@ -45,9 +74,9 @@ export default function MasterPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          file_name: selectedFile.name,
-          file_type: selectedFile.type || "audio/wav",
-          file_size: selectedFile.size,
+          file_name: file.name,
+          file_type: file.type || "audio/wav",
+          file_size: file.size,
         }),
       });
       const assetPayload = await assetRes.json();
@@ -74,7 +103,7 @@ export default function MasterPage() {
       setStatus("Uploading to S3...");
       const formData = new FormData();
       Object.entries(fields).forEach(([k, v]) => formData.append(k, v));
-      formData.append("file", selectedFile);
+      formData.append("file", file);
       const uploadRes = await fetch(url, { method: "POST", body: formData });
       if (
         !(uploadRes.status === 204 || uploadRes.status === 201 || uploadRes.ok)
@@ -84,8 +113,6 @@ export default function MasterPage() {
         setErrorText(text.slice(0, 500));
         return;
       }
-
-      setObjectKey(key);
       setPublicBaseUrl(url); // typically http://localhost:9000/<bucket>
       if (!assetId) {
         setStatus("Asset id missing in response");
@@ -123,56 +150,115 @@ export default function MasterPage() {
       setJobId(createdJobId || null);
       setJobStatus(job?.status || "queued");
       setStatus(createdJobId ? `Job created: ${createdJobId}` : "Job created");
+
+      // Refresh lists
+      await loadAssetsAndJobs();
     } catch (e: unknown) {
       setStatus("Unexpected error");
       setErrorText(e instanceof Error ? e.message : String(e));
     }
   }
 
-  async function checkJobStatus() {
-    try {
-      setErrorText(null);
-      setResultUrl(null);
-      setPreviewUrl(null);
-      if (!jobId) {
-        setStatus("No job to check. Upload and start first.");
-        return;
-      }
-      setStatus("Checking status...");
-      const res = await fetch(`/api/mastering/${jobId}`);
-      const job = await res.json();
-      if (!res.ok) {
-        setStatus(`Status check failed ${res.status}`);
-        setErrorText(JSON.stringify(job));
-        return;
-      }
-      const st: string = job?.status;
-      setJobStatus(st);
-      if (st === "failed") {
-        setStatus("Job failed");
-        setErrorText(
-          job?.last_error || job?.lastError || job?.error || "Unknown error"
-        );
-        return;
-      }
-      if (st === "done") {
-        setStatus("Job done");
-        const base =
-          publicBaseUrl ||
-          (process.env.NEXT_PUBLIC_PUBLIC_BUCKET_URL as string | undefined) ||
-          "";
-        const resultKey: string | undefined = job?.result_object_key;
-        const previewKey: string | undefined = job?.preview_object_key;
-        if (base && resultKey) setResultUrl(`${base}/${resultKey}`);
-        if (base && previewKey) setPreviewUrl(`${base}/${previewKey}`);
-        return;
-      }
-      setStatus(`Job status: ${st}`);
-    } catch (e: unknown) {
-      setStatus("Unexpected error");
-      setErrorText(e instanceof Error ? e.message : String(e));
-    }
+  // Manual job status checker removed; live updates via WebSocket
+
+  function getAssetId(a: ApiAsset): string | undefined {
+    return a.id ?? a._id;
   }
+
+  function getMimeType(a: ApiAsset): string {
+    return a.mime_type ?? a.mimeType ?? "";
+  }
+
+  function getExtLabel(a: ApiAsset): string {
+    const mime = getMimeType(a).toLowerCase();
+    if (mime.includes("wav")) return "WAV";
+    if (mime.includes("mpeg")) return "MP3";
+    if (mime.includes("flac")) return "FLAC";
+    if (mime.includes("aiff")) return "AIFF";
+    const key = a.object_key || "";
+    const m = key.match(/\.([a-z0-9]+)$/i);
+    return m ? m[1].toUpperCase() : "BIN";
+  }
+
+  const loadAssetsAndJobs = useCallback(async () => {
+    try {
+      const [assetsRes, jobsRes] = await Promise.all([
+        fetch("/api/assets", { credentials: "include" }),
+        fetch("/api/mastering/jobs", { credentials: "include" }),
+      ]);
+      if (assetsRes.ok) {
+        const list = (await assetsRes.json()) as ApiAsset[];
+        setAssets(Array.isArray(list) ? list : []);
+      }
+      if (jobsRes.ok) {
+        const jobs = (await jobsRes.json()) as MasteringJob[];
+        const map: Record<string, MasteringJob> = {};
+        for (const job of jobs) {
+          const assetId = job.inputAssetId ?? job.input_asset_id;
+          if (!assetId) continue;
+          if (!map[assetId]) map[assetId] = job;
+        }
+        setJobsByAssetId(map);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial load
+    loadAssetsAndJobs();
+  }, [loadAssetsAndJobs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const proto = window.location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${window.location.host}/api/ws`);
+      ws.onmessage = (ev: MessageEvent) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data?.type === "job.update" && data?.job) {
+            const job = data.job as MasteringJob;
+            const assetId = job.inputAssetId ?? job.input_asset_id;
+            if (assetId) {
+              setJobsByAssetId((prev) => ({ ...prev, [assetId]: job }));
+            }
+            const jobIdStr = job.id ?? job._id;
+            if (jobIdStr && jobIdStr === jobId) {
+              const st: string | undefined = job.status;
+              setJobStatus(st || null);
+              if (st === "done") {
+                const base =
+                  publicBaseUrl ||
+                  (process.env.NEXT_PUBLIC_PUBLIC_BUCKET_URL as
+                    | string
+                    | undefined) ||
+                  "";
+                const resultKey: string | undefined =
+                  job.result_object_key || undefined;
+                const previewKey: string | undefined =
+                  job.preview_object_key || undefined;
+                if (base && resultKey) setResultUrl(`${base}/${resultKey}`);
+                if (base && previewKey) setPreviewUrl(`${base}/${previewKey}`);
+              }
+            }
+          }
+        } catch {
+          // ignore malformed
+        }
+      };
+      return () => {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }, [jobId, publicBaseUrl]);
 
   return (
     <div className="grid grid-rows-[auto_1fr] min-h-screen">
@@ -189,35 +275,80 @@ export default function MasterPage() {
           Logout
         </button>
       </header>
-      <main className="flex flex-col gap-4 items-stretch w-full max-w-xl mx-auto p-8">
-        <h1 className="text-2xl font-semibold">Mastering flow</h1>
-        <div className="mt-2 grid gap-2">
-          <label className="text-sm">Select audio file</label>
-          <input
-            className="border px-2 py-1"
-            type="file"
-            accept="audio/*"
-            onChange={onFileChange}
-          />
-
-          <button
-            className="mt-2 px-3 py-2 rounded bg-blue-600 text-white"
-            onClick={uploadAndStart}
-          >
-            Upload & Start Mastering
-          </button>
-
-          <div className="text-sm opacity-80">
-            {objectKey ? `Object key: ${objectKey}` : null}
-            {jobId ? ` • Job ID: ${jobId}` : null}
+      <main className="flex flex-col gap-4 items-stretch w-full max-w-2xl mx-auto p-8">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Uploaded assets</h1>
+          <div className="flex items-center gap-2">
+            <input
+              ref={hiddenFileInputRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={(e) => {
+                onFileChange(e);
+                const f = e.target.files?.[0] || null;
+                if (f) void uploadAndStart(f);
+              }}
+            />
+            <button
+              className="px-3 py-2 rounded bg-blue-600 text-white"
+              onClick={() => hiddenFileInputRef.current?.click()}
+            >
+              Upload & Master
+            </button>
           </div>
+        </div>
 
-          <button
-            className="mt-2 px-3 py-2 rounded bg-zinc-700 text-white"
-            onClick={checkJobStatus}
-          >
-            Check Job Status
-          </button>
+        <div className="mt-2 flex flex-col gap-2">
+          {assets.length === 0 ? (
+            <div className="text-sm opacity-70">No assets yet.</div>
+          ) : (
+            <div className="flex flex-col divide-y border rounded">
+              {assets.map((a, idx) => {
+                const id = getAssetId(a) || String(idx);
+                const job = jobsByAssetId[id];
+                const st = job?.status || a.status || "created";
+                const base =
+                  publicBaseUrl ||
+                  (process.env.NEXT_PUBLIC_PUBLIC_BUCKET_URL as
+                    | string
+                    | undefined) ||
+                  "";
+                const filename = a.object_key.split("/").pop() || a.object_key;
+                const format = getExtLabel(a);
+                const downloadHref = base
+                  ? `${base}/${a.object_key}`
+                  : undefined;
+                return (
+                  <div
+                    key={id}
+                    className="flex items-center justify-between px-4 py-3"
+                  >
+                    <div className="flex flex-col">
+                      <div className="font-medium text-sm break-all">
+                        {filename}
+                      </div>
+                      <div className="text-xs opacity-70">
+                        format: {format} • status: {st}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {downloadHref ? (
+                        <a
+                          className="text-sm px-2 py-1 rounded border hover:bg-zinc-50"
+                          href={downloadHref}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Download
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="mt-6 text-sm">status: {status}</div>

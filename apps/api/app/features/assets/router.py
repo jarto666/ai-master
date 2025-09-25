@@ -13,6 +13,16 @@ def _get_user_id(request: Request) -> str:
     return str(claims.get("id"))
 
 
+@router.get(
+    "/assets",
+    response_model=list[schemas.Asset],
+    status_code=status.HTTP_200_OK,
+)
+async def list_assets(request: Request):
+    user_id = _get_user_id(request)
+    return await service.list_assets(user_id=user_id)
+
+
 @router.post(
     "/assets",
     response_model=schemas.AssetCreateResponse,
