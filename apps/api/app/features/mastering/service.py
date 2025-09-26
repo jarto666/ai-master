@@ -1,159 +1,162 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
 
-from app.core.db import db
+from app.core.db import SessionLocal
 from app.core.rabbit import publish_job
-from bson import ObjectId
+from app.features.assets.entities import Asset
+from app.features.mastering.entities import Job
 from fastapi import HTTPException, status
+from sqlalchemy import insert, select
 
-from . import schemas
+from . import dto
 
 
-async def list_jobs(*, user_id: str) -> list[schemas.MasteringJob]:
-    cursor = db.jobs.find({"userId": user_id}).sort("created_at", -1)
-    results: list[schemas.MasteringJob] = []
-    async for doc in cursor:
-        try:
-            results.append(schemas.MasteringJob.model_validate(doc))
-        except Exception:
-            continue
-    return results
+async def list_jobs(*, user_id: str) -> list[dto.MasteringJob]:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc())
+        )
+        rows = res.scalars().all()
+        out: list[dto.MasteringJob] = []
+        for j in rows:
+            out.append(
+                dto.MasteringJob.model_validate(
+                    {
+                        "id": str(j.id),
+                        "userId": str(j.user_id),
+                        "inputAssetId": str(j.input_asset_id),
+                        "referenceAssetId": str(j.reference_asset_id)
+                        if j.reference_asset_id
+                        else None,
+                        "object_key": j.object_key,
+                        "reference_object_key": j.reference_object_key,
+                        "status": j.status,
+                        "result_object_key": j.result_object_key,
+                        "preview_object_key": j.preview_object_key,
+                        "lastError": j.last_error,
+                        "created_at": j.created_at,
+                        "updated_at": j.updated_at,
+                    }
+                )
+            )
+        return out
 
 
 async def start_mastering(
-    *, req: schemas.StartMasteringRequest, user_id: str
-) -> schemas.MasteringJob:
-    try:
-        input_oid = ObjectId(req.asset_id)
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
+    *, req: dto.StartMasteringRequest, user_id: str
+) -> dto.MasteringJob:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(Asset).where(Asset.id == req.asset_id, Asset.user_id == user_id)
         )
-
-    asset = await db.assets.find_one({"_id": input_oid, "userId": user_id})
-    if not asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
-        )
-    if asset.get("status") != "uploaded":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Asset not uploaded yet"
-        )
-
-    reference_object_key: str | None = None
-    reference_asset_id: str | None = None
-    if req.reference_asset_id:
-        try:
-            ref_oid = ObjectId(req.reference_asset_id)
-        except Exception:
+        asset = res.scalar_one_or_none()
+        if not asset:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Reference asset not found",
+                status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
             )
-        ref_asset = await db.assets.find_one({"_id": ref_oid, "userId": user_id})
-        if not ref_asset:
+        if asset.status != "uploaded":
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Reference asset not found",
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Asset not uploaded yet"
             )
-        if ref_asset.get("status") != "uploaded":
+
+        reference_object_key: str | None = None
+        reference_asset_id: str | None = None
+        if req.reference_asset_id:
+            res2 = await session.execute(
+                select(Asset).where(
+                    Asset.id == req.reference_asset_id, Asset.user_id == user_id
+                )
+            )
+            ref_asset = res2.scalar_one_or_none()
+            if not ref_asset:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Reference asset not found",
+                )
+            if ref_asset.status != "uploaded":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference asset not uploaded yet",
+                )
+            reference_object_key = ref_asset.s3_key
+            reference_asset_id = str(ref_asset.id)
+
+        now = datetime.now(timezone.utc)
+        ins = (
+            insert(Job)
+            .values(
+                user_id=user_id,
+                input_asset_id=str(asset.id),
+                reference_asset_id=reference_asset_id,
+                object_key=asset.s3_key,
+                reference_object_key=reference_object_key,
+                status="queued",
+                result_object_key=None,
+                preview_object_key=None,
+                created_at=now,
+                updated_at=now,
+            )
+            .returning(Job)
+        )
+        res3 = await session.execute(ins)
+        job = res3.scalar_one()
+        await session.commit()
+
+        await publish_job(
+            {
+                "type": "job.start",
+                "jobId": str(job.id),
+                "object_key": job.object_key,
+                "params": {},
+            }
+        )
+
+        return dto.MasteringJob.model_validate(
+            {
+                "id": str(job.id),
+                "userId": str(job.user_id),
+                "inputAssetId": str(job.input_asset_id),
+                "referenceAssetId": str(job.reference_asset_id)
+                if job.reference_asset_id
+                else None,
+                "object_key": job.object_key,
+                "reference_object_key": job.reference_object_key,
+                "status": job.status,
+                "result_object_key": job.result_object_key,
+                "preview_object_key": job.preview_object_key,
+                "lastError": job.last_error,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+            }
+        )
+
+
+async def get_status(*, job_id: str, user_id: str) -> dto.MasteringJob:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(Job).where(Job.id == job_id, Job.user_id == user_id)
+        )
+        j: Job | None = res.scalar_one_or_none()
+        if not j:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Reference asset not uploaded yet",
+                status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
             )
-        reference_object_key = ref_asset.get("object_key")
-        reference_asset_id = str(ref_asset.get("_id"))
-
-    job_data: Dict[str, Any] = {
-        "userId": user_id,
-        "inputAssetId": str(asset["_id"]),
-        "referenceAssetId": reference_asset_id,
-        "object_key": asset["object_key"],
-        "reference_object_key": reference_object_key,
-        "status": "queued",
-        "result_object_key": None,
-        "preview_object_key": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-    }
-
-    result = await db.jobs.insert_one(job_data)
-    job_id = result.inserted_id
-
-    await publish_job(
-        {
-            "type": "job.start",
-            "jobId": str(job_id),
-            "object_key": job_data["object_key"],
-            "params": {},
-        }
-    )
-
-    created = await db.jobs.find_one({"_id": ObjectId(job_id)})
-    return schemas.MasteringJob.model_validate(created)
-
-
-async def get_status(*, job_id: str, user_id: str) -> schemas.MasteringJob:
-    try:
-        oid = ObjectId(job_id)
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        return dto.MasteringJob.model_validate(
+            {
+                "id": str(j.id),
+                "userId": str(j.user_id),
+                "inputAssetId": str(j.input_asset_id),
+                "referenceAssetId": str(j.reference_asset_id)
+                if j.reference_asset_id
+                else None,
+                "object_key": j.object_key,
+                "reference_object_key": j.reference_object_key,
+                "status": j.status,
+                "result_object_key": j.result_object_key,
+                "preview_object_key": j.preview_object_key,
+                "lastError": j.last_error,
+                "created_at": j.created_at,
+                "updated_at": j.updated_at,
+            }
         )
-    doc = await db.jobs.find_one({"_id": oid, "userId": user_id})
-    if not doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
-        )
-    return schemas.MasteringJob.model_validate(doc)
-
-
-# async def create_job(req: schemas.JobCreateRequest) -> schemas.Job:
-#     job_data = req.model_dump()
-#     job_data["status"] = "queued"
-#     job_data["created_at"] = datetime.utcnow()
-#     job_data["updated_at"] = job_data["created_at"]
-
-#     # insert into db first so consumers can update it
-#     result = await db.jobs.insert_one(job_data)
-#     job_id = result.inserted_id
-
-#     # publish start payload for worker
-#     print(f"[api] publish start payload for worker {job_id}")
-#     await publish_job(
-#         {
-#             "type": "job.start",
-#             "jobId": str(job_id),
-#             "object_key": job_data["object_key"],
-#             "params": {},
-#         }
-#     )
-#     print(f"[api] published start payload for worker {job_id}")
-
-#     # read from db
-#     created_job_doc = await db.jobs.find_one({"_id": ObjectId(job_id)})
-#     try:
-#         return schemas.Job.model_validate(created_job_doc)
-#     except Exception:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Failed to validate job",
-#         )
-
-
-# async def get_job(job_id: str) -> schemas.Job:
-#     try:
-#         oid = ObjectId(job_id)
-#     except Exception:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
-#         )
-
-#     doc = await db.jobs.find_one({"_id": oid})
-#     if not doc:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
-#         )
-#     return schemas.Job.model_validate(doc)

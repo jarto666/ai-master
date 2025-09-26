@@ -3,21 +3,13 @@ import os
 import signal
 from contextlib import asynccontextmanager
 
-from app.core.db import db
+import app.core.entities_hub  # noqa: F401
 from app.features.assets.router import router as assets_router
 from app.features.auth.router import router as auth_router
 from app.features.health.router import router as health_router
 from app.features.mastering.router import router as mastering_router
-from app.features.realtime.events import (
-    start_events_consumer,
-    stop_events_consumer,
-)
-from app.features.realtime.websocket import (
-    broadcast_job_update_to_user,
-)
-from app.features.realtime.websocket import (
-    router as websocket_router,
-)
+from app.features.realtime.events import start_events_consumer, stop_events_consumer
+from app.features.realtime.websocket import router as websocket_router
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
@@ -26,12 +18,7 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ensure indexes and start events consumer
-    try:
-        await db.users.create_index("email", unique=True)
-    except Exception:
-        # Index may already exist or DB not reachable at startup; ignore here
-        pass
+    # Startup: start events consumer (DB migrations handled via Alembic)
 
     start_events_consumer(_handle_event_broadcast)
 
@@ -82,12 +69,17 @@ app.include_router(health_router)
 app.include_router(websocket_router)
 
 
-async def _handle_event_broadcast(job_id: str, update: dict) -> None:
-    try:
-        from bson import ObjectId
+async def _handle_event_broadcast(job_id: str, job_doc: dict) -> None:
+    """Delegate to realtime feature's broadcaster.
 
-        job_doc = await db.jobs.find_one({"_id": ObjectId(job_id)})
-        if job_doc and isinstance(job_doc.get("userId"), str):
-            await broadcast_job_update_to_user(job_doc["userId"], job_doc)
+    Kept as a thin wrapper to avoid coupling main to implementation details.
+    """
+    try:
+        from app.features.realtime.websocket import broadcast_job_update_to_user
+
+        user_id = str(job_doc.get("userId") or "")
+        if not user_id:
+            return
+        await broadcast_job_update_to_user(user_id, job_doc)
     except Exception:
         pass

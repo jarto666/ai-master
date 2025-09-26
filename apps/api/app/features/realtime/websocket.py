@@ -35,6 +35,7 @@ def _get_user_id_from_websocket(websocket: WebSocket) -> str:
 
 
 async def broadcast_job_update_to_user(user_id: str, job_doc: dict) -> None:
+    # Require user_id to avoid leaking events
     if not user_id:
         return
     sockets = list(_ws_connections.get(user_id, set()))

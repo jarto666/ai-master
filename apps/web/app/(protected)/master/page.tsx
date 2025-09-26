@@ -40,7 +40,7 @@ export default function MasterPage() {
     created_at?: string;
   };
 
-  const [assets, setAssets] = useState<ApiAsset[]>([]);
+  const [assetsList, setAssets] = useState<ApiAsset[]>([]);
   const [jobsByAssetId, setJobsByAssetId] = useState<
     Record<string, MasteringJob>
   >({});
@@ -300,11 +300,11 @@ export default function MasterPage() {
         </div>
 
         <div className="mt-2 flex flex-col gap-2">
-          {assets.length === 0 ? (
+          {assetsList.length === 0 ? (
             <div className="text-sm opacity-70">No assets yet.</div>
           ) : (
             <div className="flex flex-col divide-y border rounded">
-              {assets.map((a, idx) => {
+              {assetsList.map((a, idx) => {
                 const id = getAssetId(a) || String(idx);
                 const job = jobsByAssetId[id];
                 const st = job?.status || a.status || "created";

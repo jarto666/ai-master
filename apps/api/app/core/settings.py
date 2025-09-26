@@ -1,8 +1,10 @@
 from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
-    MONGO_URI: str = ""
+    DATABASE_URL: str = ""
     RABBITMQ_URL: str = ""
     RMQ_EXCHANGE: str = ""
     RMQ_EXCHANGE_TYPE: str = ""
@@ -26,7 +28,7 @@ class Settings(BaseSettings):
     AUTH_COOKIE_NAME: str = ""
     OIDC_AUDIENCE: str = ""
     SUPABASE_PROJECT_REF: str = ""
-    OIDC_ISSUER: str = f""
+    OIDC_ISSUER: str = ""
     OIDC_JWKS_URL: str = ""
     SUPABASE_JWT_SECRET: str = ""
 
@@ -40,5 +42,6 @@ class Settings(BaseSettings):
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
 
 settings = Settings()

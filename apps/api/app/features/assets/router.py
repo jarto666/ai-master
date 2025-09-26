@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.core.auth import require_user
 from fastapi import APIRouter, Request, status
 
-from . import schemas, service
+from . import dto, service
 
 router = APIRouter()
 
@@ -15,7 +15,7 @@ def _get_user_id(request: Request) -> str:
 
 @router.get(
     "/assets",
-    response_model=list[schemas.Asset],
+    response_model=list[dto.Asset],
     status_code=status.HTTP_200_OK,
 )
 async def list_assets(request: Request):
@@ -25,21 +25,21 @@ async def list_assets(request: Request):
 
 @router.post(
     "/assets",
-    response_model=schemas.AssetCreateResponse,
+    response_model=dto.AssetCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_asset(req: schemas.AssetCreateRequest, request: Request):
+async def create_asset(req: dto.AssetCreateRequest, request: Request):
     user_id = _get_user_id(request)
     return await service.create_asset(req=req, user_id=user_id)
 
 
 @router.post(
     "/assets/{asset_id}/confirm",
-    response_model=schemas.Asset,
+    response_model=dto.Asset,
     status_code=status.HTTP_200_OK,
 )
 async def confirm_asset_upload(
-    asset_id: str, req: schemas.AssetConfirmRequest, request: Request
+    asset_id: str, req: dto.AssetConfirmRequest, request: Request
 ):
     user_id = _get_user_id(request)
     return await service.confirm_upload(asset_id=asset_id, user_id=user_id, req=req)
@@ -47,7 +47,7 @@ async def confirm_asset_upload(
 
 @router.get(
     "/assets/{asset_id}",
-    response_model=schemas.Asset,
+    response_model=dto.Asset,
     status_code=status.HTTP_200_OK,
 )
 async def get_asset(asset_id: str, request: Request):

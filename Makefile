@@ -1,11 +1,14 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help up down logs env deps api worker web-deps web web-build web-start
+.PHONY: help up down logs env deps api worker web-deps web web-build web-start db-migrate db-upgrade db-rev
 
 help:
 	@echo "make env      # copy .env.example -> .env"
-	@echo "make up       # start Mongo/Rabbit/MinIO"
+	@echo "make up       # start Postgres/Rabbit/MinIO"
+	@echo "make db-migrate   # run Alembic upgrade head (apps/api)"
+	@echo "make db-upgrade   # alias to db-migrate"
+	@echo "make db-rev       # create new Alembic revision with message MSG=..."
 	@echo "make deps     # uv sync with api+worker groups"
 	@echo "make api      # run FastAPI (uv script)"
 	@echo "make worker   # run worker (uv script)"
@@ -19,7 +22,8 @@ env:
 
 up:
 	docker compose up -d
-	@echo "MinIO:  http://localhost:9001"
+	@echo "Postgres:  postgres://app:app@localhost:6432/mastering"
+	@echo "MinIO:     http://localhost:9001"
 	@echo "Rabbit: http://localhost:15678 (app/app)"
 	docker compose ps
 
@@ -49,3 +53,20 @@ web-build:
 
 web-start:
 	cd apps/web && npm run start
+
+db-migrate:
+	cd apps/api && uv run alembic -c alembic.ini upgrade head
+
+db-upgrade: db-migrate
+
+# db-rev:
+# 	cd apps/api && uv run alembic -c alembic.ini revision -m "$${MSG:-change}"
+
+db-rev:
+	cd apps/api && \
+	LAST=$$(ls -1 versions 2>/dev/null | grep '^[0-9]*_' | sort | tail -n1 | cut -d_ -f1); \
+	[ -z "$$LAST" ] && LAST=0; \
+	NEXT=$$((LAST + 1)); \
+	ID=$$(printf "%04d" $$NEXT); \
+	AUTOGEN=$${AUTO:+--autogenerate}; \
+	uv run alembic -c alembic.ini revision $$AUTOGEN -m "$${MSG:-change}" --rev-id "$$ID"

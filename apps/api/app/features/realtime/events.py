@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 import aio_pika
-from app.core.db import db
+from app.core.db import SessionLocal
 from app.core.settings import settings
+from app.features.mastering.entities import Job
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 _events_task: asyncio.Task | None = None
 
@@ -52,7 +56,8 @@ async def _consume_events(handler: Callable[[str, dict], Awaitable[None]]) -> No
                     continue
 
                 # Persist basic job status updates
-                update: dict = {"updated_at": __import__("datetime").datetime.utcnow()}
+
+                update: dict = {"updated_at": datetime.now(timezone.utc)}
                 if event_type == "job.processing":
                     update["status"] = "processing"
                 elif event_type == "job.done":
@@ -64,15 +69,36 @@ async def _consume_events(handler: Callable[[str, dict], Awaitable[None]]) -> No
                 elif event_type == "job.failed":
                     update["status"] = "failed"
                     if "error" in data:
-                        update["lastError"] = str(data["error"])[:500]
+                        update["last_error"] = str(data["error"])[:500]
                 try:
-                    from bson import ObjectId
-
-                    await db.jobs.update_one(
-                        {"_id": ObjectId(job_id)}, {"$set": update}
-                    )
-                    # Notify handler for broadcast
-                    await handler(job_id, update)
+                    async with SessionLocal() as session:
+                        await session.execute(
+                            sa_update(Job).where(Job.id == job_id).values(**update)
+                        )
+                        await session.commit()
+                        # Reload full job to include necessary fields for UI
+                        res = await session.execute(select(Job).where(Job.id == job_id))
+                        j: Job | None = res.scalar_one_or_none()
+                        if j is None:
+                            continue
+                        job_doc = {
+                            "id": str(j.id),
+                            "userId": str(j.user_id),
+                            "inputAssetId": str(j.input_asset_id),
+                            "referenceAssetId": str(j.reference_asset_id)
+                            if j.reference_asset_id
+                            else None,
+                            "object_key": j.object_key,
+                            "reference_object_key": j.reference_object_key,
+                            "status": j.status,
+                            "result_object_key": j.result_object_key,
+                            "preview_object_key": j.preview_object_key,
+                            "lastError": j.last_error,
+                            "created_at": j.created_at,
+                            "updated_at": j.updated_at,
+                        }
+                    # Notify handler for broadcast with full job document
+                    await handler(job_id, job_doc)
                 except Exception:
                     # Swallow to keep consumer running
                     pass

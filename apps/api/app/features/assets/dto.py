@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class PresignedPost(BaseModel):
@@ -27,7 +27,7 @@ class AssetConfirmRequest(BaseModel):
 
 
 class Asset(BaseModel):
-    id: str = Field(..., alias="_id")
+    id: str = Field(...)
     user_id: str = Field(..., alias="userId")
     object_key: str = Field(..., description="S3 key for the original upload")
     mime_type: str = Field(..., alias="mimeType")
@@ -35,20 +35,12 @@ class Asset(BaseModel):
     duration_seconds: float | None = Field(None, alias="durationSeconds")
     status: Literal["created", "uploaded"] = Field("created")
     etag: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         populate_by_name = True
         json_encoders = {datetime: lambda v: v.isoformat()}
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def cast_id_to_str(cls, v):
-        try:
-            return str(v) if v is not None else v
-        except Exception:
-            return v
 
 
 class AssetCreateResponse(BaseModel):
