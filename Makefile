@@ -64,9 +64,7 @@ db-upgrade: db-migrate
 
 db-rev:
 	cd apps/api && \
-	LAST=$$(ls -1 versions 2>/dev/null | grep '^[0-9]*_' | sort | tail -n1 | cut -d_ -f1); \
-	[ -z "$$LAST" ] && LAST=0; \
-	NEXT=$$((LAST + 1)); \
-	ID=$$(printf "%04d" $$NEXT); \
+	ID=$$(date +"%Y%m%d%H%M"); \
+	AUTO=$${AUTO:-1}; \
 	AUTOGEN=$${AUTO:+--autogenerate}; \
 	uv run alembic -c alembic.ini revision $$AUTOGEN -m "$${MSG:-change}" --rev-id "$$ID"

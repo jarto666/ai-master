@@ -1,8 +1,8 @@
 """initial
 
-Revision ID: 0001
+Revision ID: 202509271257
 Revises: 
-Create Date: 2025-09-26 23:17:48.919285+00:00
+Create Date: 2025-09-27 10:57:33.484436+00:00
 
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '0001'
+revision = '202509271257'
 down_revision = None
 branch_labels = None
 depends_on = None
