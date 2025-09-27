@@ -53,3 +53,13 @@ async def confirm_asset_upload(
 async def get_asset(asset_id: str, request: Request):
     user_id = _get_user_id(request)
     return await service.get_asset(asset_id=asset_id, user_id=user_id)
+
+
+@router.get(
+    "/assets/{asset_id}/download-url",
+    response_model=dto.AssetDownloadUrl,
+    status_code=status.HTTP_200_OK,
+)
+async def get_asset_download_url(asset_id: str, request: Request):
+    user_id = _get_user_id(request)
+    return await service.get_download_url(asset_id=asset_id, user_id=user_id)

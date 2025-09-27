@@ -27,6 +27,7 @@ class Asset(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     s3_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    file_name: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     duration_seconds: Mapped[float | None] = mapped_column(nullable=True)

@@ -8,6 +8,7 @@ from app.features.assets.entities import Asset
 from app.features.mastering.entities import Job
 from fastapi import HTTPException, status
 from sqlalchemy import insert, select
+from sqlalchemy.orm import joinedload
 
 from . import dto
 
@@ -15,7 +16,10 @@ from . import dto
 async def list_jobs(*, user_id: str) -> list[dto.MasteringJob]:
     async with SessionLocal() as session:
         res = await session.execute(
-            select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc())
+            select(Job)
+            .where(Job.user_id == user_id)
+            .options(joinedload(Job.input_asset))
+            .order_by(Job.created_at.desc())
         )
         rows = res.scalars().all()
         out: list[dto.MasteringJob] = []
@@ -29,14 +33,15 @@ async def list_jobs(*, user_id: str) -> list[dto.MasteringJob]:
                         "referenceAssetId": str(j.reference_asset_id)
                         if j.reference_asset_id
                         else None,
-                        "object_key": j.object_key,
-                        "reference_object_key": j.reference_object_key,
+                        "objectKey": j.object_key,
+                        "referenceObjectKey": j.reference_object_key,
                         "status": j.status,
-                        "result_object_key": j.result_object_key,
-                        "preview_object_key": j.preview_object_key,
+                        "resultObjectKey": j.result_object_key,
+                        "previewObjectKey": j.preview_object_key,
+                        "fileName": j.input_asset.file_name,
                         "lastError": j.last_error,
-                        "created_at": j.created_at,
-                        "updated_at": j.updated_at,
+                        "createdAt": j.created_at,
+                        "updatedAt": j.updated_at,
                     }
                 )
             )

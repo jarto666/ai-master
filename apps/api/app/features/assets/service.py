@@ -31,14 +31,15 @@ async def list_assets(*, user_id: str) -> list[dto.Asset]:
                 {
                     "id": str(a.id),
                     "userId": str(a.user_id),
-                    "object_key": a.s3_key,
+                    "objectKey": a.s3_key,
                     "mimeType": a.mime_type,
                     "fileSize": a.file_size,
                     "durationSeconds": a.duration_seconds,
+                    "fileName": a.file_name,
                     "status": a.status,
                     "etag": a.etag,
-                    "created_at": a.created_at,
-                    "updated_at": a.updated_at,
+                    "createdAt": a.created_at,
+                    "updatedAt": a.updated_at,
                 }
             )
             for a in rows
@@ -91,6 +92,7 @@ async def create_asset(
             .values(
                 user_id=user_id,
                 s3_key="__pending__",
+                file_name=req.file_name,
                 mime_type=req.file_type,
                 file_size=req.file_size,
                 duration_seconds=req.duration_seconds,
@@ -113,11 +115,16 @@ async def create_asset(
         await session.commit()
 
     # Create presigned POST for client direct upload
+    content_disposition = f'attachment; filename="{req.file_name}"'
     conditions = [
         ["content-length-range", 1, MAX_FILE_SIZE_BYTES],
         {"Content-Type": req.file_type},
+        {"Content-Disposition": content_disposition},
     ]
-    fields = {"Content-Type": req.file_type}
+    fields = {
+        "Content-Type": req.file_type,
+        "Content-Disposition": content_disposition,
+    }
     presigned = s3.generate_presigned_post(
         Bucket=settings.S3_BUCKET,
         Key=object_key,
@@ -130,14 +137,15 @@ async def create_asset(
         {
             "id": str(created.id),
             "userId": str(created.user_id),
-            "object_key": object_key,
+            "objectKey": object_key,
             "mimeType": created.mime_type,
             "fileSize": created.file_size,
+            "fileName": created.file_name,
             "durationSeconds": created.duration_seconds,
             "status": "created",
             "etag": None,
-            "created_at": now,
-            "updated_at": now,
+            "createdAt": now,
+            "updatedAt": now,
         }
     )
     upload = dto.PresignedPost(url=presigned["url"], fields=presigned["fields"])
@@ -193,14 +201,15 @@ async def confirm_upload(
             {
                 "id": str(a.id),
                 "userId": str(a.user_id),
-                "object_key": a.s3_key,
+                "objectKey": a.s3_key,
                 "mimeType": a.mime_type,
                 "fileSize": a.file_size,
+                "fileName": a.file_name,
                 "durationSeconds": a.duration_seconds,
                 "status": a.status,
                 "etag": a.etag,
-                "created_at": a.created_at,
-                "updated_at": a.updated_at,
+                "createdAt": a.created_at,
+                "updatedAt": a.updated_at,
             }
         )
 
@@ -229,3 +238,22 @@ async def get_asset(*, asset_id: str, user_id: str) -> dto.Asset:
                 "updated_at": a.updated_at,
             }
         )
+
+
+async def get_download_url(*, asset_id: str, user_id: str) -> dto.AssetDownloadUrl:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id)
+        )
+        asset: Asset | None = res.scalar_one_or_none()
+        if not asset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
+            )
+
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.S3_BUCKET, "Key": asset.s3_key},
+            ExpiresIn=3600,
+        )
+        return dto.AssetDownloadUrl(url=url)
